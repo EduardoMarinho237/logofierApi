@@ -53,20 +53,29 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "cat > ~/logofier/.env" <<EOF
-          POSTGRES_USER=${POSTGRES_USER}
-          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-          POSTGRES_DB=${POSTGRES_DB}
-          JWT_SECRET=${JWT_SECRET}
-          JWT_EXPIRATION_MINUTES=60
-          REFRESH_TOKEN_EXPIRATION_DAYS=14
-          CORS_ORIGINS=${CORS_ORIGINS}
-          R2_ACCOUNT_ID=${R2_ACCOUNT_ID}
-          R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
-          R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
-          R2_BUCKET_NAME=${R2_BUCKET_NAME}
-          R2_PUBLIC_URL=${R2_PUBLIC_URL}
-          EOF
+          PAYLOAD=$(python3 - <<'PY'
+          import base64, os
+
+          values = {
+              "POSTGRES_USER": os.getenv("POSTGRES_USER", ""),
+              "POSTGRES_PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
+              "POSTGRES_DB": os.getenv("POSTGRES_DB", ""),
+              "JWT_SECRET": os.getenv("JWT_SECRET", ""),
+              "JWT_EXPIRATION_MINUTES": "60",
+              "REFRESH_TOKEN_EXPIRATION_DAYS": "14",
+              "CORS_ORIGINS": os.getenv("CORS_ORIGINS", ""),
+              "R2_ACCOUNT_ID": os.getenv("R2_ACCOUNT_ID", ""),
+              "R2_ACCESS_KEY_ID": os.getenv("R2_ACCESS_KEY_ID", ""),
+              "R2_SECRET_ACCESS_KEY": os.getenv("R2_SECRET_ACCESS_KEY", ""),
+              "R2_BUCKET_NAME": os.getenv("R2_BUCKET_NAME", ""),
+              "R2_PUBLIC_URL": os.getenv("R2_PUBLIC_URL", ""),
+          }
+          content = "".join(f"{k}={v}\n" for k, v in values.items())
+          print(base64.b64encode(content.encode()).decode())
+          PY
+          )
+          sshpass -e ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" \
+            "echo '${PAYLOAD}' | base64 -d > ~/logofier/.env"
 
       - name: Rebuild and restart
         env:
