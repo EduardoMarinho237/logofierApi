@@ -53,7 +53,7 @@ jobs:
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
           R2_PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL }}
         run: |
-          sshpass -e ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "cat > ~/logofier/.env" <<'EOF'
+          sshpass -e ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "cat > ~/logofier/.env" <<EOF
           POSTGRES_USER=${POSTGRES_USER}
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           POSTGRES_DB=${POSTGRES_DB}
