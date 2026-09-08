@@ -65,6 +65,24 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _coerce_cors_origins(cls, v: object) -> object:
+        if v is None or v == "":
+            return ["http://localhost:3000", "https://logofier.vercel.app"]
+        if isinstance(v, str):
+            s = v.strip()
+            try:
+                import json as _json
+
+                parsed = _json.loads(s)
+                if isinstance(parsed, list):
+                    return [str(x) for x in parsed]
+            except Exception:
+                pass
+            return [part.strip() for part in s.split(",") if part.strip()]
+        return v
+
     @field_validator("JWT_SECRET")
     @classmethod
     def _jwt_secret_must_be_strong(cls, v: str) -> str:
