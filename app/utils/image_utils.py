@@ -48,10 +48,10 @@ def convert_to_png(image_bytes: bytes, filename: str) -> bytes:
 
     if ext == "svg":
         try:
-            import cairosvg
+            from cairosvg.surface import PNGSurface
         except ImportError:
             raise ValueError("SVG support requires cairosvg")
-        return cairosvg.svg2png(
+        return PNGSurface.convert(
             bytestring=image_bytes,
             url_fetcher=blocking_svg_url_fetcher,
         )

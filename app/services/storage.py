@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from urllib.parse import quote
 
@@ -34,7 +35,8 @@ def _get_client():
 
 def _local_path(key: str) -> str:
     base = os.path.abspath(LOCAL_STORAGE_DIR)
-    full = os.path.abspath(os.path.join(base, *(key.split("/"))))
+    parts = re.split(r"[\\/]", key)
+    full = os.path.abspath(os.path.join(base, *parts))
     if os.path.commonpath([base, full]) != base:
         raise ValueError(f"Invalid storage key: {key}")
     return full

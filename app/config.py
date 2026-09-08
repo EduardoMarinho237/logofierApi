@@ -12,6 +12,13 @@ class Settings(BaseSettings):
     # --- Database / infra -------------------------------------------------
     DATABASE_URL: str = "sqlite:///./logofier.db"
 
+    # --- Orchestration (docker compose) ------------------------------------
+    # Set by docker compose via .env to build DATABASE_URL and the Postgres
+    # container. Declared here so the app tolerates them in the shared .env.
+    POSTGRES_USER: str = "logofier"
+    POSTGRES_PASSWORD: str = ""
+    POSTGRES_DB: str = "logofier"
+
     # --- Auth -------------------------------------------------------------
     # Required. No default on purpose: starting with a weak/placeholder
     # secret would allow token forgery.
