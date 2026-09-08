@@ -41,7 +41,25 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_DIR: str = ""
 
     # --- CORS -------------------------------------------------------------
-    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
+    # Kept as a plain string on purpose: pydantic-settings force-decodes
+    # complex types (list[str]) as JSON before validators run, so a
+    # comma-separated value would crash startup. Parse via cors_origins_list.
+    CORS_ORIGINS: str = "http://localhost:3000,https://logofier.vercel.app"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        s = self.CORS_ORIGINS.strip()
+        if not s:
+            return []
+        try:
+            import json as _json
+
+            parsed = _json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+        except Exception:
+            pass
+        return [part.strip() for part in s.split(",") if part.strip()]
 
     # --- Upload limits (centralized — tune here) --------------------------
     MAX_AVATAR_BYTES: int = 5 * 1024 * 1024
@@ -64,24 +82,6 @@ class Settings(BaseSettings):
     JOB_PROCESSING_TIMEOUT_SECONDS: int = 900
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
-
-    @field_validator("CORS_ORIGINS", mode="before")
-    @classmethod
-    def _coerce_cors_origins(cls, v: object) -> object:
-        if v is None or v == "":
-            return ["http://localhost:3000", "https://logofier.vercel.app"]
-        if isinstance(v, str):
-            s = v.strip()
-            try:
-                import json as _json
-
-                parsed = _json.loads(s)
-                if isinstance(parsed, list):
-                    return [str(x) for x in parsed]
-            except Exception:
-                pass
-            return [part.strip() for part in s.split(",") if part.strip()]
-        return v
 
     @field_validator("JWT_SECRET")
     @classmethod
