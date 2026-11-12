@@ -29,6 +29,7 @@ from app.schemas import (
     JobResponse,
     JobStatusResponse,
     LogoPosition,
+    PagePositionMap,
     ProcessingListResponse,
 )
 from app.services import storage
@@ -432,10 +433,56 @@ async def update_logo_position(
     )
 
 
+@router.put("/{job_id}/files/{file_index}/pages/position", response_model=JobResponse)
+async def update_file_page_positions(
+    job_id: str,
+    file_index: int,
+    body: PagePositionMap,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = _get_owned_job(job_id, user, db)
+
+    mode = job.mode or "multiple_pdfs"
+    source_keys = list(job.source_keys or [])
+    logo_keys = list(job.logo_keys or [])
+
+    if mode == "multiple_logos":
+        if not (0 <= file_index < len(logo_keys)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file index",
+            )
+    else:
+        if not (0 <= file_index < len(source_keys)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file index",
+            )
+
+    config = JobConfig.model_validate(job.config)
+    current = dict(config.file_page_positions)
+    current[str(file_index)] = body
+    config.file_page_positions = current
+    job.config = config.model_dump()
+    db.commit()
+    db.refresh(job)
+    return JobResponse(
+        id=job.id,
+        status=job.status.value,
+        total_files=job.total_files,
+        processed_files=job.processed_files,
+        config=job.config,
+        error_message=job.error_message,
+        created_at=job.created_at.isoformat() if job.created_at else None,
+    )
+
+
 @router.get("/{job_id}/preview-page")
 def preview_page(
     job_id: str,
     page: int = 0,
+    file: int = 0,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -446,8 +493,21 @@ def preview_page(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No PDF files uploaded",
         )
+
+    mode = job.mode or "multiple_pdfs"
+    if mode == "multiple_logos":
+        # In multiple logos mode there is only one source PDF; `file` selects the logo.
+        pdf_key = keys[0]
+    else:
+        if file < 0 or file >= len(keys):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file index",
+            )
+        pdf_key = keys[file]
+
     try:
-        pdf_bytes = storage.download_file(keys[0])
+        pdf_bytes = storage.download_file(pdf_key)
         from app.services.pdf_processor import render_page_preview
 
         png_bytes, width, height = render_page_preview(pdf_bytes, page)
@@ -560,6 +620,9 @@ def review_preview(
     try:
         pdf_bytes = storage.download_file(pdf_key)
         logo_bytes = storage.download_file(logo_key) if logo_key else None
+        reference_logo_bytes = None
+        if mode == "multiple_logos" and logo_keys:
+            reference_logo_bytes = storage.download_file(logo_keys[0])
         from app.services.pdf_processor import render_stamped_pages_preview
 
         results, width, height, page_count = render_stamped_pages_preview(
@@ -569,6 +632,7 @@ def review_preview(
             page_list,
             preserve_aspect=preserve_aspect,
             dpi=72,
+            file_index=file,
         )
     except Exception:
         raise HTTPException(

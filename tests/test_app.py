@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import time
@@ -1296,3 +1297,274 @@ def test_svg_conversion_and_remote_image_rejection():
     evil_svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><image href="http://evil.example/x.png"/></svg>'
     with _pytest.raises(Exception):
         convert_to_png(evil_svg, "logo.svg")
+
+
+def _red_bbox(page, dpi=96):
+    pix = page.get_pixmap(dpi=dpi)
+    s, stride, n, w_, h_ = pix.samples, pix.stride, pix.n, pix.width, pix.height
+    minx = maxx = miny = maxy = None
+    for y in range(h_):
+        row = s[y * stride : (y + 1) * stride]
+        for x in range(w_):
+            r_, g_, b_ = row[x * n], row[x * n + 1], row[x * n + 2]
+            if r_ > 200 and g_ < 100 and b_ < 100:
+                minx = x if minx is None else min(minx, x)
+                maxx = x if maxx is None else max(maxx, x)
+                miny = y if miny is None else min(miny, y)
+                maxy = y if maxy is None else max(maxy, y)
+    return (minx, maxx, miny, maxy)
+
+
+def _make_logo_bytes(width: int = 100, height: int = 50) -> bytes:
+    import pymupdf
+
+    logo = pymupdf.open()
+    lp = logo.new_page(width=width, height=height)
+    lp.draw_rect(pymupdf.Rect(0, 0, width, height), color=(1, 0, 0), fill=(1, 0, 0))
+    return lp.get_pixmap().tobytes("png")
+
+
+def test_logo_axis_aligns_other_logos_without_moving_reference():
+    import pymupdf
+
+    from app.schemas import JobConfig, PageSelection, Position
+    from app.services.pdf_processor import stamp_logo_on_pdf
+
+    # Reference logo is wide (200x100). Current logo is square (100x100).
+    # With width=100pt, reference height is 50pt and current height is 100pt.
+    ref_logo = _make_logo_bytes(200, 100)
+    cur_logo = _make_logo_bytes(100, 100)
+
+    pdf = pymupdf.open()
+    pdf.new_page(width=595, height=842)
+    pdf_bytes = pdf.tobytes()
+
+    # Reference top-left at (300, 400), width=100.
+    config = JobConfig(
+        page_selection=PageSelection(mode="all"),
+        position=Position(x=300, y=400, width=100, height=50),
+    )
+
+    # With top_left axis the current logo shares the reference top-left.
+    out = stamp_logo_on_pdf(
+        pdf_bytes, cur_logo, config, preserve_aspect=True, reference_logo_bytes=ref_logo
+    )
+    doc = pymupdf.open(stream=out, filetype="pdf")
+    bbox = _red_bbox(doc[0])
+    doc.close()
+    # 300*96/72 = 400, (300+100)*96/72 = 533, 400*96/72 = 533, (400+100)*96/72 = 667
+    assert bbox[0] == 400 and abs(bbox[1] - 533) <= 1
+    assert bbox[2] == 533 and abs(bbox[3] - 667) <= 1
+
+    # With bottom_left axis the current logo shares the reference bottom-left.
+    # Reference bottom-left = (300, 450). Current top-left = (300, 450-100) = (300, 350).
+    config = config.model_copy(update={"logo_axis": "bottom_left"})
+    out = stamp_logo_on_pdf(
+        pdf_bytes, cur_logo, config, preserve_aspect=True, reference_logo_bytes=ref_logo
+    )
+    doc = pymupdf.open(stream=out, filetype="pdf")
+    bbox = _red_bbox(doc[0])
+    doc.close()
+    # y = 350*96/72 = 467, maxy = (350+100)*96/72 = 600
+    assert bbox[0] == 400 and abs(bbox[1] - 533) <= 1
+    assert abs(bbox[2] - 467) <= 1 and abs(bbox[3] - 600) <= 1
+
+    # With center axis the current logo is centred on the reference center.
+    # Reference center = (350, 425). Current top-left = (350-50, 425-50) = (300, 375).
+    config = config.model_copy(update={"logo_axis": "center"})
+    out = stamp_logo_on_pdf(
+        pdf_bytes, cur_logo, config, preserve_aspect=True, reference_logo_bytes=ref_logo
+    )
+    doc = pymupdf.open(stream=out, filetype="pdf")
+    bbox = _red_bbox(doc[0])
+    doc.close()
+    # y = 375*96/72 = 500, maxy = (375+100)*96/72 = 633
+    assert bbox[0] == 400 and abs(bbox[1] - 533) <= 1
+    assert bbox[2] == 500 and abs(bbox[3] - 633) <= 1
+
+
+def test_logo_axis_default_is_top_left():
+    import pymupdf
+
+    from app.schemas import JobConfig, PageSelection, Position
+    from app.services.pdf_processor import stamp_logo_on_pdf
+
+    logo = _make_logo_bytes(100, 100)
+
+    pdf = pymupdf.open()
+    pdf.new_page(width=595, height=842)
+    pdf_bytes = pdf.tobytes()
+
+    config = JobConfig(
+        page_selection=PageSelection(mode="all"),
+        position=Position(x=60, y=60, width=100, height=100),
+    )
+    out = stamp_logo_on_pdf(pdf_bytes, logo, config, preserve_aspect=True)
+    doc = pymupdf.open(stream=out, filetype="pdf")
+    bbox = _red_bbox(doc[0])
+    doc.close()
+
+    # Default behaviour: (x, y) is the top-left corner.
+    assert bbox[0] == 80 and abs(bbox[1] - 213) <= 1
+    assert bbox[2] == 80 and abs(bbox[3] - 213) <= 1
+
+
+def test_logo_axis_rest_in_first_rest_mode():
+    import pymupdf
+
+    from app.schemas import JobConfig, PageSelection, Position
+    from app.services.pdf_processor import stamp_logo_on_pdf
+
+    ref_logo = _make_logo_bytes(200, 100)
+    cur_logo = _make_logo_bytes(100, 100)
+
+    pdf = pymupdf.open()
+    for _ in range(2):
+        pdf.new_page(width=595, height=842)
+    pdf_bytes = pdf.tobytes()
+
+    config = JobConfig(
+        page_selection=PageSelection(mode="all"),
+        position=Position(x=300, y=400, width=100, height=50),
+        position_rest=Position(x=300, y=400, width=100, height=50),
+        position_mode="first_rest",
+        logo_axis="top_left",
+        logo_axis_rest="bottom_left",
+    )
+
+    out = stamp_logo_on_pdf(
+        pdf_bytes, cur_logo, config, preserve_aspect=True, reference_logo_bytes=ref_logo
+    )
+    doc = pymupdf.open(stream=out, filetype="pdf")
+    first = _red_bbox(doc[0])
+    second = _red_bbox(doc[1])
+    doc.close()
+
+    # First page uses top_left -> current logo top-left at (300, 400).
+    assert first[0] == 400 and abs(first[1] - 533) <= 1
+    assert first[2] == 533 and abs(first[3] - 667) <= 1
+    # Second page uses bottom_left -> current logo top-left at (300, 350).
+    assert second[0] == 400 and abs(second[1] - 533) <= 1
+    assert abs(second[2] - 467) <= 1 and abs(second[3] - 600) <= 1
+
+
+def test_file_page_positions_override_global_position():
+    import pymupdf
+
+    from app.schemas import JobConfig, PagePositionMap, PageSelection, Position
+    from app.services.pdf_processor import stamp_logo_on_pdf
+
+    logo = _make_logo_bytes(100, 50)
+    pdf = pymupdf.open()
+    for _ in range(3):
+        pdf.new_page(width=595, height=842)
+    pdf_bytes = pdf.tobytes()
+
+    config = JobConfig(
+        page_selection=PageSelection(mode="all"),
+        position=Position(x=60, y=60, width=100, height=50),
+        file_page_positions={
+            "0": PagePositionMap(
+                page_positions={
+                    "1": Position(x=300, y=300, width=80, height=40),
+                    "2": Position(x=400, y=400, width=80, height=40),
+                }
+            )
+        },
+    )
+
+    out = stamp_logo_on_pdf(pdf_bytes, logo, config, file_index=0)
+    doc = pymupdf.open(stream=out, filetype="pdf")
+
+    first = _red_bbox(doc[0])
+    second = _red_bbox(doc[1])
+    third = _red_bbox(doc[2])
+    doc.close()
+
+    # Page 0 uses global position.
+    assert first[0] == 80 and abs(first[1] - 213) <= 1
+    # Page 1 uses override at (300, 300).
+    assert second[0] == 400 and abs(second[1] - 506) <= 1
+    assert second[2] == 400 and abs(second[3] - 453) <= 1
+    # Page 2 uses override at (400, 400).
+    assert third[0] == 533 and abs(third[1] - 640) <= 1
+    assert third[2] == 533 and abs(third[3] - 587) <= 1
+
+
+def test_file_page_positions_override_first_rest():
+    import pymupdf
+
+    from app.schemas import JobConfig, PagePositionMap, PageSelection, Position
+    from app.services.pdf_processor import stamp_logo_on_pdf
+
+    logo = _make_logo_bytes(100, 50)
+    pdf = pymupdf.open()
+    for _ in range(4):
+        pdf.new_page(width=595, height=842)
+    pdf_bytes = pdf.tobytes()
+
+    config = JobConfig(
+        page_selection=PageSelection(mode="all"),
+        position=Position(x=60, y=60, width=100, height=50),
+        position_rest=Position(x=300, y=300, width=80, height=40),
+        position_mode="first_rest",
+        file_page_positions={
+            "0": PagePositionMap(
+                page_positions={
+                    "2": Position(x=400, y=400, width=80, height=40),
+                }
+            )
+        },
+    )
+
+    out = stamp_logo_on_pdf(pdf_bytes, logo, config, file_index=0)
+    doc = pymupdf.open(stream=out, filetype="pdf")
+
+    first = _red_bbox(doc[0])
+    second = _red_bbox(doc[1])
+    third = _red_bbox(doc[2])
+    fourth = _red_bbox(doc[3])
+    doc.close()
+
+    # Page 0 uses global position.
+    assert first[0] == 80 and abs(first[1] - 213) <= 1
+    # Page 1 uses position_rest.
+    assert second[0] == 400 and abs(second[1] - 506) <= 1
+    # Page 2 uses override.
+    assert third[0] == 533 and abs(third[1] - 640) <= 1
+    # Page 3 uses position_rest again.
+    assert fourth[0] == 400 and abs(fourth[1] - 506) <= 1
+
+
+def test_update_file_page_positions_endpoint(client, token):
+    job_id, headers = create_uploaded_job(client, token)
+
+    payload = {
+        "page_positions": {
+            "1": {"x": 300, "y": 300, "width": 80, "height": 40},
+            "2": {"x": 400, "y": 400, "width": 80, "height": 40},
+        }
+    }
+    r = client.put(
+        f"/api/jobs/{job_id}/files/0/pages/position",
+        headers=headers,
+        json=payload,
+    )
+    assert r.status_code == 200, r.text
+    config = r.json()["config"]
+    assert "file_page_positions" in config
+    assert config["file_page_positions"]["0"]["page_positions"]["1"]["x"] == 300
+
+
+def test_update_file_page_positions_invalid_index(client, token):
+    job_id, headers = create_uploaded_job(client, token)
+
+    payload = {"page_positions": {"1": {"x": 300, "y": 300, "width": 80, "height": 40}}}
+    r = client.put(
+        f"/api/jobs/{job_id}/files/99/pages/position",
+        headers=headers,
+        json=payload,
+    )
+    assert r.status_code == 400
+
+

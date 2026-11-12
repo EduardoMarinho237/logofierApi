@@ -78,6 +78,8 @@ def run_pdf_job(job_id: str, source_keys: list[str], logo_keys: list[str], mode:
             source_name = (job.source_names or [""])[0] or os.path.basename(source_key)
             source_base = os.path.splitext(source_name)[0]
             logo_names = job.logo_names or []
+            # First logo defines the shared anchor point for axis alignment.
+            reference_logo_bytes = storage.download_file(logo_keys[0])
             for idx, logo_key in enumerate(logo_keys):
                 _within_deadline()
                 logo_bytes = storage.download_file(logo_key)
@@ -93,7 +95,12 @@ def run_pdf_job(job_id: str, source_keys: list[str], logo_keys: list[str], mode:
                         }
                     )
                 stamped = stamp_logo_on_pdf(
-                    pdf_bytes, logo_bytes, eff_config, preserve_aspect=True
+                    pdf_bytes,
+                    logo_bytes,
+                    eff_config,
+                    preserve_aspect=True,
+                    reference_logo_bytes=reference_logo_bytes,
+                    file_index=idx,
                 )
                 logo_file = logo_names[idx] if idx < len(logo_names) else os.path.basename(logo_key)
                 logo_base = os.path.splitext(logo_file)[0]
@@ -109,7 +116,7 @@ def run_pdf_job(job_id: str, source_keys: list[str], logo_keys: list[str], mode:
             for idx, source_key in enumerate(source_keys):
                 _within_deadline()
                 pdf_bytes = storage.download_file(source_key)
-                stamped = stamp_logo_on_pdf(pdf_bytes, logo_bytes, config)
+                stamped = stamp_logo_on_pdf(pdf_bytes, logo_bytes, config, file_index=idx)
                 source_file = source_names[idx] if idx < len(source_names) else os.path.basename(source_key)
                 source_base = os.path.splitext(source_file)[0]
                 output_name = f"{source_base}.pdf"

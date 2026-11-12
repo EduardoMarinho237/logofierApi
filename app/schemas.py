@@ -1,4 +1,9 @@
+from typing import Literal
+
 from pydantic import BaseModel, EmailStr, Field
+
+
+LogoAxis = Literal["top_left", "top_right", "bottom_left", "bottom_right", "center"]
 
 
 class LoginRequest(BaseModel):
@@ -71,6 +76,10 @@ class LogoPosition(BaseModel):
     position_rest: Position | None = None
 
 
+class PagePositionMap(BaseModel):
+    page_positions: dict[str, Position] = {}
+
+
 class JobConfig(BaseModel):
     page_selection: PageSelection = PageSelection()
     position: Position = Position()
@@ -78,7 +87,10 @@ class JobConfig(BaseModel):
     position_mode: str = "single"
     mode: str = "multiple_pdfs"
     pos_strategy: str = "shared"
+    logo_axis: LogoAxis = "top_left"
+    logo_axis_rest: LogoAxis = "top_left"
     logo_positions: dict[str, LogoPosition] = {}
+    file_page_positions: dict[str, PagePositionMap] = {}
 
 
 class JobCreateRequest(BaseModel):
@@ -129,6 +141,8 @@ class PresetResponse(BaseModel):
     position: dict
     position_rest: dict | None
     position_mode: str
+    logo_axis: LogoAxis = "top_left"
+    logo_axis_rest: LogoAxis = "top_left"
     created_at: str | None
 
 
@@ -140,6 +154,8 @@ class PresetCreateRequest(BaseModel):
     position: Position
     position_rest: Position | None = None
     position_mode: str = "single"
+    logo_axis: LogoAxis = "top_left"
+    logo_axis_rest: LogoAxis = "top_left"
 
 
 class LogoResponse(BaseModel):

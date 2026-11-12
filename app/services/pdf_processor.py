@@ -60,7 +60,48 @@ def get_target_pages(total_pages: int, config: JobConfig) -> list[int]:
         return list(range(total_pages))
 
 
-def _position_rect(x: float, y: float, w: float, h: float, page) -> pymupdf.Rect:
+def _axis_offset(w: float, h: float, axis: str) -> tuple[float, float]:
+    """Vector from the top-left corner to the chosen anchor point."""
+    if axis == "center":
+        return w / 2, h / 2
+    if axis == "top_right":
+        return w, 0.0
+    if axis == "bottom_left":
+        return 0.0, h
+    if axis == "bottom_right":
+        return w, h
+    # Default: top_left.
+    return 0.0, 0.0
+
+
+def _axis_adjusted_top_left(
+    ref_x: float,
+    ref_y: float,
+    ref_w: float,
+    ref_h: float,
+    current_w: float,
+    current_h: float,
+    axis: str,
+) -> tuple[float, float]:
+    """Shift the current logo so its anchor aligns with the reference logo's anchor.
+
+    The reference logo stays at (ref_x, ref_y) as top-left. The current logo is
+    moved so that both share the same anchor point (center, corner, etc.).
+    """
+    if axis == "top_left" or not axis:
+        return ref_x, ref_y
+    ref_off_x, ref_off_y = _axis_offset(ref_w, ref_h, axis)
+    cur_off_x, cur_off_y = _axis_offset(current_w, current_h, axis)
+    return ref_x + ref_off_x - cur_off_x, ref_y + ref_off_y - cur_off_y
+
+
+def _position_rect(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    page,
+) -> pymupdf.Rect:
     """Build the rect for a position in the page's unrotated mediabox space.
 
     The frontend positions the logo in the rotation-aware (page.rect) coordinate
@@ -91,11 +132,46 @@ def _position_rect(x: float, y: float, w: float, h: float, page) -> pymupdf.Rect
     return base_rect
 
 
+def _logo_aspect(logo_bytes: bytes) -> float:
+    img = _open_safe_image(logo_bytes).convert("RGBA")
+    return (img.width / img.height) if img.height else 1.0
+
+
+def _resolve_page_position(
+    config: JobConfig,
+    file_index: int,
+    page_num: int,
+) -> tuple[Position, str]:
+    """Return the effective position and axis for a page of a specific file.
+
+    Priority:
+    1. Per-page override in file_page_positions[file_index][page_num].
+    2. first_rest fallback (page 0 uses position, rest uses position_rest).
+    3. Global position.
+    """
+    file_map = config.file_page_positions.get(str(file_index))
+    if file_map and str(page_num) in file_map.page_positions:
+        return file_map.page_positions[str(page_num)], config.logo_axis or "top_left"
+
+    is_first_rest = (
+        config.position_mode == "first_rest"
+        and config.page_selection.mode == "all"
+        and config.position_rest is not None
+    )
+    if is_first_rest and page_num > 0:
+        axis = config.logo_axis_rest or config.logo_axis or "top_left"
+        return config.position_rest, axis
+
+    return config.position, config.logo_axis or "top_left"
+
+
 def stamp_logo_on_pdf(
     pdf_bytes: bytes,
     logo_bytes: bytes,
     config: JobConfig,
     preserve_aspect: bool = False,
+    reference_logo_bytes: bytes | None = None,
+    file_index: int = 0,
 ) -> bytes:
     if len(pdf_bytes) > settings.MAX_PDF_BYTES:
         raise ValueError(f"PDF exceeds the size limit of {settings.MAX_PDF_BYTES} bytes")
@@ -125,25 +201,26 @@ def stamp_logo_on_pdf(
         return w, pos.height
 
     target_pages = get_target_pages(doc.page_count, config)
-    # first_rest only applies when stamping all pages; for any other selection
-    # the logo uses the single `position` everywhere.
-    is_first_rest = (
-        config.position_mode == "first_rest"
-        and config.page_selection.mode == "all"
-        and config.position_rest is not None
-    )
     xref = 0
+
+    # Reference logo defines the anchor point shared by all logos in
+    # multiple_logos mode. When absent, the current logo is used as its own
+    # reference (no shifting).
+    ref_aspect = (
+        _logo_aspect(reference_logo_bytes)
+        if reference_logo_bytes
+        else logo_aspect
+    )
 
     for page_num in target_pages:
         page = doc[page_num]
-        # In "first_rest" mode the first page uses `position` and every other
-        # page uses `position_rest`.
-        if is_first_rest and page_num > 0:
-            pos = config.position_rest
-        else:
-            pos = config.position
+        pos, axis = _resolve_page_position(config, file_index, page_num)
         w, h = effective_size(pos)
-        rect = _position_rect(pos.x, pos.y, w, h, page)
+        ref_h = w / ref_aspect
+        x, y = _axis_adjusted_top_left(
+            pos.x, pos.y, w, ref_h, w, h, axis
+        )
+        rect = _position_rect(x, y, w, h, page)
         xref = page.insert_image(
             rect,
             stream=png_bytes,
@@ -188,6 +265,8 @@ def render_stamped_pages_preview(
     requested_pages: list[int],
     preserve_aspect: bool = False,
     dpi: int = 96,
+    reference_logo_bytes: bytes | None = None,
+    file_index: int = 0,
 ) -> tuple[list[tuple[int, bytes, bool]], float, float, int]:
     """Render specific pages of a PDF with the logo applied where the config
     targets them, opening the PDF once and encoding the logo once for speed.
@@ -207,10 +286,10 @@ def render_stamped_pages_preview(
     else:
         png_bytes, logo_aspect = None, 1.0
 
-    is_first_rest = (
-        config.position_mode == "first_rest"
-        and config.page_selection.mode == "all"
-        and config.position_rest is not None
+    ref_aspect = (
+        _logo_aspect(reference_logo_bytes)
+        if reference_logo_bytes
+        else logo_aspect
     )
 
     def effective_size(pos) -> tuple[float, float]:
@@ -227,12 +306,13 @@ def render_stamped_pages_preview(
         page = doc[page_num]
         stamped = page_num in target_pages and png_bytes is not None
         if stamped:
-            if is_first_rest and page_num > 0:
-                pos = config.position_rest
-            else:
-                pos = config.position
+            pos, axis = _resolve_page_position(config, file_index, page_num)
             w, h = effective_size(pos)
-            rect = _position_rect(pos.x, pos.y, w, h, page)
+            ref_h = w / ref_aspect if ref_aspect else h
+            x, y = _axis_adjusted_top_left(
+                pos.x, pos.y, w, ref_h, w, h, axis
+            )
+            rect = _position_rect(x, y, w, h, page)
             xref = page.insert_image(
                 rect,
                 stream=png_bytes,

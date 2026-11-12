@@ -20,6 +20,8 @@ def _preset_response(preset: Preset) -> PresetResponse:
         position=preset.position or {},
         position_rest=preset.position_rest,
         position_mode=preset.position_mode,
+        logo_axis=preset.logo_axis or "top_left",
+        logo_axis_rest=preset.logo_axis_rest or "top_left",
         created_at=preset.created_at.isoformat() if preset.created_at else None,
     )
 
@@ -81,6 +83,8 @@ def create_preset(
         position=body.position.model_dump(),
         position_rest=body.position_rest.model_dump() if body.position_rest else None,
         position_mode=body.position_mode,
+        logo_axis=body.logo_axis,
+        logo_axis_rest=body.logo_axis_rest,
     )
     db.add(preset)
     db.commit()

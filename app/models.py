@@ -116,6 +116,8 @@ class Preset(Base):
     position = Column(JSON, nullable=True, default=dict)
     position_rest = Column(JSON, nullable=True, default=dict)
     position_mode = Column(String(32), nullable=False, default="single")
+    logo_axis = Column(String(32), nullable=False, default="top_left")
+    logo_axis_rest = Column(String(32), nullable=False, default="top_left")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
         DateTime,
