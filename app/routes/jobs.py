@@ -18,7 +18,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -636,6 +636,7 @@ def review_preview(
             page_list,
             preserve_aspect=preserve_aspect,
             dpi=72,
+            reference_logo_bytes=reference_logo_bytes,
             file_index=file,
         )
     except Exception:
@@ -652,12 +653,15 @@ def review_preview(
         }
         for (p, b, stamped) in results
     ]
-    return {
-        "width": width,
-        "height": height,
-        "page_count": page_count,
-        "pages": pages_payload,
-    }
+    return JSONResponse(
+        content={
+            "width": width,
+            "height": height,
+            "page_count": page_count,
+            "pages": pages_payload,
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 @router.put("/{job_id}/config", response_model=JobResponse)

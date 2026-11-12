@@ -7,7 +7,7 @@ import pymupdf
 from PIL import Image
 
 from app.config import settings
-from app.schemas import JobConfig
+from app.schemas import JobConfig, LogoPlacement, Position
 from app.utils.image_utils import _open_safe_image
 
 
@@ -165,6 +165,35 @@ def _resolve_page_position(
     return config.position, config.logo_axis or "top_left"
 
 
+def _resolve_page_placements(
+    config: JobConfig,
+    file_index: int,
+    page_num: int,
+) -> list[tuple[Position, str]]:
+    """Resolve all duplicated logo placements for one output page."""
+    placements = list(config.logo_placements)
+    if not placements:
+        position, axis = _resolve_page_position(config, file_index, page_num)
+        return [(position, axis)]
+
+    file_map = config.file_page_positions.get(str(file_index))
+    custom = file_map.page_positions.get(str(page_num)) if file_map else None
+    is_rest = (
+        config.position_mode == "first_rest"
+        and config.page_selection.mode == "all"
+        and page_num > 0
+    )
+    resolved: list[tuple[Position, str]] = []
+    for placement in placements:
+        position = placement.position_rest if is_rest and placement.position_rest else placement.position
+        axis = placement.logo_axis_rest if is_rest else placement.logo_axis
+        if custom and len(resolved) == 0:
+            position = custom
+            axis = config.logo_axis_rest if is_rest else config.logo_axis
+        resolved.append((position, axis))
+    return resolved
+
+
 def stamp_logo_on_pdf(
     pdf_bytes: bytes,
     logo_bytes: bytes,
@@ -214,20 +243,18 @@ def stamp_logo_on_pdf(
 
     for page_num in target_pages:
         page = doc[page_num]
-        pos, axis = _resolve_page_position(config, file_index, page_num)
-        w, h = effective_size(pos)
-        ref_h = w / ref_aspect
-        x, y = _axis_adjusted_top_left(
-            pos.x, pos.y, w, ref_h, w, h, axis
-        )
-        rect = _position_rect(x, y, w, h, page)
-        xref = page.insert_image(
-            rect,
-            stream=png_bytes,
-            xref=xref,
-            keep_proportion=preserve_aspect,
-            overlay=True,
-        )
+        for pos, axis in _resolve_page_placements(config, file_index, page_num):
+            w, h = effective_size(pos)
+            ref_h = w / ref_aspect
+            x, y = _axis_adjusted_top_left(pos.x, pos.y, w, ref_h, w, h, axis)
+            rect = _position_rect(x, y, w, h, page)
+            xref = page.insert_image(
+                rect,
+                stream=png_bytes,
+                xref=xref,
+                keep_proportion=preserve_aspect,
+                overlay=True,
+            )
 
     output = io.BytesIO()
     doc.save(output)
@@ -306,20 +333,18 @@ def render_stamped_pages_preview(
         page = doc[page_num]
         stamped = page_num in target_pages and png_bytes is not None
         if stamped:
-            pos, axis = _resolve_page_position(config, file_index, page_num)
-            w, h = effective_size(pos)
-            ref_h = w / ref_aspect if ref_aspect else h
-            x, y = _axis_adjusted_top_left(
-                pos.x, pos.y, w, ref_h, w, h, axis
-            )
-            rect = _position_rect(x, y, w, h, page)
-            xref = page.insert_image(
-                rect,
-                stream=png_bytes,
-                xref=xref,
-                keep_proportion=preserve_aspect,
-                overlay=True,
-            )
+            for pos, axis in _resolve_page_placements(config, file_index, page_num):
+                w, h = effective_size(pos)
+                ref_h = w / ref_aspect if ref_aspect else h
+                x, y = _axis_adjusted_top_left(pos.x, pos.y, w, ref_h, w, h, axis)
+                rect = _position_rect(x, y, w, h, page)
+                xref = page.insert_image(
+                    rect,
+                    stream=png_bytes,
+                    xref=xref,
+                    keep_proportion=preserve_aspect,
+                    overlay=True,
+                )
         pix = page.get_pixmap(dpi=dpi, alpha=False)
         results.append((page_num, pix.tobytes("png"), stamped))
 
