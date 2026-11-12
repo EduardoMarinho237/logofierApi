@@ -97,6 +97,7 @@ async def create_job(
     config: str = File(...),
     logo: list[UploadFile] = File(default=[]),
     logo_ids: list[str] = Form(default=[]),
+    save_logos: list[bool] = Form(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -160,28 +161,31 @@ async def create_job(
             )
         png_bytes = convert_to_png(logo_bytes, lf.filename or f"logo_{i}.png")
 
-        # Save to user's logo library.
-        file_id = uuid.uuid4().hex
-        user_storage_key = f"user-logos/{user.id}/{file_id}.png"
-        user_thumb_key = f"user-logos/{user.id}/{file_id}_thumb.png"
-        width, height = get_image_dimensions(png_bytes)
-        thumb_bytes = create_logo_thumbnail(png_bytes)
-        storage.upload_file(png_bytes, user_storage_key, content_type="image/png")
-        storage.upload_file(thumb_bytes, user_thumb_key, content_type="image/png")
+        # Save to the user's logo library only when selected by the user.
+        # An omitted field keeps the legacy API behaviour; the frontend always
+        # sends one explicit preference for each uploaded logo.
+        should_save = not save_logos or (i < len(save_logos) and save_logos[i])
+        if should_save:
+            file_id = uuid.uuid4().hex
+            user_storage_key = f"user-logos/{user.id}/{file_id}.png"
+            user_thumb_key = f"user-logos/{user.id}/{file_id}_thumb.png"
+            width, height = get_image_dimensions(png_bytes)
+            thumb_bytes = create_logo_thumbnail(png_bytes)
+            storage.upload_file(png_bytes, user_storage_key, content_type="image/png")
+            storage.upload_file(thumb_bytes, user_thumb_key, content_type="image/png")
 
-        name_base = sanitize_filename(
-            lf.filename.rsplit(".", 1)[0] if "." in lf.filename else lf.filename,
-            default=f"Logo {i + 1}",
-            keep_unicode=True,
-        )
-        user_logo = UserLogo(
-            user_id=user.id,
-            name=name_base or "Logo",
-            storage_key=user_storage_key,
-            thumb_key=user_thumb_key,
-            aspect_ratio=width / height if height else 1.0,
-        )
-        db.add(user_logo)
+            name_base = sanitize_filename(
+                lf.filename.rsplit(".", 1)[0] if "." in lf.filename else lf.filename,
+                default=f"Logo {i + 1}",
+                keep_unicode=True,
+            )
+            db.add(UserLogo(
+                user_id=user.id,
+                name=name_base or "Logo",
+                storage_key=user_storage_key,
+                thumb_key=user_thumb_key,
+                aspect_ratio=width / height if height else 1.0,
+            ))
 
         # Copy to job-specific path for processing.
         job_key = f"logos/{job_id}/logo_{i}.png"

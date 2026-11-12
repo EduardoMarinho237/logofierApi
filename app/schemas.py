@@ -89,6 +89,7 @@ class JobConfig(BaseModel):
     pos_strategy: str = "shared"
     logo_axis: LogoAxis = "top_left"
     logo_axis_rest: LogoAxis = "top_left"
+    from_preset: bool = False
     logo_positions: dict[str, LogoPosition] = {}
     file_page_positions: dict[str, PagePositionMap] = {}
 
