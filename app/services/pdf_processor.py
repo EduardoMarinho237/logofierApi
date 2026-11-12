@@ -171,7 +171,13 @@ def _resolve_page_placements(
     page_num: int,
 ) -> list[tuple[Position, str]]:
     """Resolve all duplicated logo placements for one output page."""
-    placements = list(config.logo_placements)
+    placements = list(
+        config.logo_placements_rest
+        if config.position_mode == "first_rest"
+        and page_num > 0
+        and config.logo_placements_rest
+        else config.logo_placements
+    )
     if not placements:
         position, axis = _resolve_page_position(config, file_index, page_num)
         return [(position, axis)]
@@ -180,7 +186,6 @@ def _resolve_page_placements(
     custom = file_map.page_positions.get(str(page_num)) if file_map else None
     is_rest = (
         config.position_mode == "first_rest"
-        and config.page_selection.mode == "all"
         and page_num > 0
     )
     resolved: list[tuple[Position, str]] = []

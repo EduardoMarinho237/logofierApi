@@ -97,6 +97,7 @@ class JobConfig(BaseModel):
     logo_axis: LogoAxis = "top_left"
     logo_axis_rest: LogoAxis = "top_left"
     logo_placements: list[LogoPlacement] = Field(default_factory=list, max_length=3)
+    logo_placements_rest: list[LogoPlacement] = Field(default_factory=list, max_length=3)
     from_preset: bool = False
     logo_positions: dict[str, LogoPosition] = {}
     file_page_positions: dict[str, PagePositionMap] = {}
@@ -153,6 +154,7 @@ class PresetResponse(BaseModel):
     logo_axis: LogoAxis = "top_left"
     logo_axis_rest: LogoAxis = "top_left"
     logo_placements: list[dict] = []
+    logo_placements_rest: list[dict] = []
     created_at: str | None
 
 
@@ -167,6 +169,7 @@ class PresetCreateRequest(BaseModel):
     logo_axis: LogoAxis = "top_left"
     logo_axis_rest: LogoAxis = "top_left"
     logo_placements: list[LogoPlacement] = []
+    logo_placements_rest: list[LogoPlacement] = []
 
 
 class LogoResponse(BaseModel):
